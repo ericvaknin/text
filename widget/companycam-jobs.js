@@ -3,6 +3,9 @@
 // the private Widget-Data repo (jobs.json)
 // This list is a snapshot. It does not update itself until that file is republished.
 
+// Paste your Widget-Data token between the quotes below:
+const MY_TOKEN = "PASTE_TOKEN_HERE"
+
 const FEED_URL = "https://api.github.com/repos/ericvaknin/Widget-Data/contents/jobs.json"
 const CACHE_NAME = "companycam-jobs-cache.json"
 
@@ -17,6 +20,8 @@ const COLORS = {
 const TOKEN_KEY = "widgetDataToken"
 
 async function getToken() {
+  const own = MY_TOKEN.replace(/\s+/g, "")
+  if (own && own !== "PASTE_TOKEN_HERE") return own
   let saved = null
   try { if (Keychain.contains(TOKEN_KEY)) saved = Keychain.get(TOKEN_KEY) } catch (e) {}
   if (saved) return saved
