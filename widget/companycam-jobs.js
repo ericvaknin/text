@@ -11,7 +11,6 @@ const COLORS = {
   title: Color.white(),
   meta: new Color("#8E8E93"),
   name: Color.white(),
-  address: new Color("#A1A1A6"),
   error: new Color("#FF9F0A")
 }
 
@@ -43,9 +42,9 @@ async function loadJobs() {
 }
 
 function rowLimit(family) {
-  if (family === "small") return 3
-  if (family === "large") return 12
-  return 5
+  if (family === "small") return 6
+  if (family === "large") return 20
+  return 8
 }
 
 function makeWidget(data, fromCache, family) {
@@ -53,14 +52,14 @@ function makeWidget(data, fromCache, family) {
   widget.backgroundColor = COLORS.bg
   const isSmall = family === "small"
   const isLarge = family === "large"
-  widget.setPadding(isSmall ? 10 : 12, isSmall ? 12 : 14, isSmall ? 10 : 12, isSmall ? 12 : 14)
+  widget.setPadding(8, 10, 8, 10)
 
   const header = widget.addStack()
   header.layoutHorizontally()
   header.centerAlignContent()
 
   const title = header.addText("Jobs")
-  title.font = Font.boldSystemFont(isSmall ? 14 : 16)
+  title.font = Font.boldSystemFont(13)
   title.textColor = COLORS.title
   header.addSpacer()
 
@@ -72,11 +71,11 @@ function makeWidget(data, fromCache, family) {
   }
   if (metaText) {
     const meta = header.addText(metaText)
-    meta.font = Font.systemFont(isSmall ? 9 : 10)
+    meta.font = Font.systemFont(9)
     meta.textColor = COLORS.meta
   }
 
-  widget.addSpacer(isSmall ? 6 : 8)
+  widget.addSpacer(4)
 
   const jobs = data && Array.isArray(data.jobs) ? data.jobs : []
   const shown = jobs.slice(0, rowLimit(family))
@@ -88,36 +87,29 @@ function makeWidget(data, fromCache, family) {
     msg.font = Font.systemFont(12)
     msg.textColor = COLORS.error
     msg.lineLimit = 3
-    widget.addSpacer()
     return widget
   }
 
+  const nameFont = Font.semiboldSystemFont(isLarge || !isSmall ? 11 : 12)
   shown.forEach((job, i) => {
     if (i > 0) {
-      widget.addSpacer(isLarge ? 5 : isSmall ? 5 : 6)
+      widget.addSpacer(isLarge ? 2 : isSmall ? 3 : 2)
     }
     const row = widget.addStack()
-    row.layoutVertically()
+    row.layoutHorizontally()
+    row.centerAlignContent()
     row.url = job.url || ""
 
     const name = row.addText(job.name || "Untitled")
-    name.font = Font.semiboldSystemFont(isSmall ? 12 : 13)
+    name.font = nameFont
     name.textColor = COLORS.name
     name.lineLimit = 1
-
-    if (job.address && !isSmall) {
-      const addr = row.addText(job.address)
-      addr.font = Font.systemFont(11)
-      addr.textColor = COLORS.address
-      addr.lineLimit = 1
-    }
   })
 
   if (isSmall && shown[0] && shown[0].url) {
     widget.url = shown[0].url
   }
 
-  widget.addSpacer()
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000)
   return widget
 }
@@ -147,11 +139,9 @@ async function showTable(data, fromCache) {
   for (const job of jobs) {
     const row = new UITableRow()
     row.dismissOnSelect = true
-    row.height = 56
-    const cell = row.addText(job.name || "Untitled", job.address || "")
+    row.height = 44
+    const cell = row.addText(job.name || "Untitled")
     cell.titleFont = Font.semiboldSystemFont(16)
-    cell.subtitleFont = Font.systemFont(12)
-    cell.subtitleColor = Color.gray()
     table.addRow(row)
   }
 
@@ -174,4 +164,3 @@ if (config.runsInWidget) {
 }
 
 Script.complete()
-
