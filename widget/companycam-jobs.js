@@ -42,9 +42,9 @@ async function loadJobs() {
 }
 
 function rowLimit(family) {
-  if (family === "small") return 6
-  if (family === "large") return 20
-  return 8
+  if (family === "small") return 4
+  if (family === "large") return 10
+  return 4
 }
 
 function makeWidget(data, fromCache, family) {
@@ -59,7 +59,7 @@ function makeWidget(data, fromCache, family) {
   header.centerAlignContent()
 
   const title = header.addText("Jobs")
-  title.font = Font.boldSystemFont(13)
+  title.font = Font.boldSystemFont(20)
   title.textColor = COLORS.title
   header.addSpacer()
 
@@ -71,11 +71,11 @@ function makeWidget(data, fromCache, family) {
   }
   if (metaText) {
     const meta = header.addText(metaText)
-    meta.font = Font.systemFont(9)
+    meta.font = Font.systemFont(12)
     meta.textColor = COLORS.meta
   }
 
-  widget.addSpacer(4)
+  widget.addSpacer(8)
 
   const jobs = data && Array.isArray(data.jobs) ? data.jobs : []
   const shown = jobs.slice(0, rowLimit(family))
@@ -90,10 +90,10 @@ function makeWidget(data, fromCache, family) {
     return widget
   }
 
-  const nameFont = Font.semiboldSystemFont(isLarge || !isSmall ? 11 : 12)
+  const nameFont = Font.semiboldSystemFont(isSmall ? 20 : 22)
   shown.forEach((job, i) => {
     if (i > 0) {
-      widget.addSpacer(isLarge ? 2 : isSmall ? 3 : 2)
+      widget.addSpacer(isSmall ? 6 : 8)
     }
     const row = widget.addStack()
     row.layoutHorizontally()
@@ -104,6 +104,7 @@ function makeWidget(data, fromCache, family) {
     name.font = nameFont
     name.textColor = COLORS.name
     name.lineLimit = 1
+    name.minimumScaleFactor = 0.8
   })
 
   if (isSmall && shown[0] && shown[0].url) {
@@ -164,3 +165,4 @@ if (config.runsInWidget) {
 }
 
 Script.complete()
+
