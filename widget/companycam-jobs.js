@@ -17,18 +17,30 @@ const COLORS = {
 const TOKEN_KEY = "widgetDataToken"
 
 async function getToken() {
-  if (Keychain.contains(TOKEN_KEY)) return Keychain.get(TOKEN_KEY)
+  let saved = null
+  try { if (Keychain.contains(TOKEN_KEY)) saved = Keychain.get(TOKEN_KEY) } catch (e) {}
+  if (saved) return saved
   if (!config.runsInApp) return null
   const a = new Alert()
   a.title = "GitHub token"
   a.message = "Paste your read-only Widget-Data token. It is saved on this phone only."
-  a.addSecureTextField("token", "")
+  a.addTextField("token", "")
   a.addAction("Save")
   a.addCancelAction("Cancel")
   if ((await a.presentAlert()) === -1) return null
-  const t = a.textFieldValue(0).trim()
-  if (t) Keychain.set(TOKEN_KEY, t)
-  return t || null
+  const t = a.textFieldValue(0).replace(/\s+/g, "")
+  if (!t) return null
+  try { Keychain.set(TOKEN_KEY, t) } catch (e) { await showMsg("Could not save token", String(e)) }
+  return t
+}
+
+async function showMsg(title, msg) {
+  if (!config.runsInApp) return
+  const b = new Alert()
+  b.title = title
+  b.message = msg
+  b.addAction("OK")
+  await b.presentAlert()
 }
 
 async function loadJobs() {
@@ -42,13 +54,20 @@ async function loadJobs() {
     const req = new Request(FEED_URL + "?t=" + Date.now())
     req.headers = { "Authorization": "Bearer " + token, "Accept": "application/vnd.github.raw+json" }
     req.timeoutInterval = 8
-    const json = await req.loadJSON()
+    const raw = await req.loadString()
+    const code = req.response ? req.response.statusCode : 0
+    if (code === 401 || code === 403 || code === 404) {
+      try { Keychain.remove(TOKEN_KEY) } catch (e) {}
+      throw new Error("GitHub said " + code + ". The token was rejected or can't see Widget-Data. Run again and paste the token.")
+    }
+    const json = JSON.parse(raw)
     if (!json || !Array.isArray(json.jobs)) {
-      throw new Error("Bad data")
+      throw new Error("Bad data (status " + code + ")")
     }
     data = json
     fm.writeString(cachePath, JSON.stringify(json))
   } catch (e) {
+    await showMsg("Couldn't load fresh data", String(e && e.message ? e.message : e))
     if (fm.fileExists(cachePath)) {
       try {
         data = JSON.parse(fm.readString(cachePath))
