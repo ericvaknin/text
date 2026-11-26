@@ -1,9 +1,9 @@
 // CompanyCam Materials — Scriptable widget
 // Shows jobs with open material lists from:
-// https://ericvaknin.github.io/text/widget/materials.json
+// the private Widget-Data repo (materials.json)
 // This list is a snapshot. It does not update itself until that file is republished.
 
-const FEED_URL = "https://ericvaknin.github.io/text/widget/materials.json"
+const FEED_URL = "https://api.github.com/repos/ericvaknin/Widget-Data/contents/materials.json"
 const CACHE_NAME = "companycam-materials-cache.json"
 
 const COLORS = {
@@ -14,13 +14,33 @@ const COLORS = {
   error: new Color("#FF9F0A")
 }
 
+const TOKEN_KEY = "widgetDataToken"
+
+async function getToken() {
+  if (Keychain.contains(TOKEN_KEY)) return Keychain.get(TOKEN_KEY)
+  if (!config.runsInApp) return null
+  const a = new Alert()
+  a.title = "GitHub token"
+  a.message = "Paste your read-only Widget-Data token. It is saved on this phone only."
+  a.addSecureTextField("token", "")
+  a.addAction("Save")
+  a.addCancelAction("Cancel")
+  if ((await a.presentAlert()) === -1) return null
+  const t = a.textFieldValue(0).trim()
+  if (t) Keychain.set(TOKEN_KEY, t)
+  return t || null
+}
+
 async function loadJobs() {
   const fm = FileManager.local()
   const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_NAME)
   let data = null
   let fromCache = false
   try {
+    const token = await getToken()
+    if (!token) throw new Error("No token")
     const req = new Request(FEED_URL + "?t=" + Date.now())
+    req.headers = { "Authorization": "Bearer " + token, "Accept": "application/vnd.github.raw+json" }
     req.timeoutInterval = 8
     const json = await req.loadJSON()
     if (!json || !Array.isArray(json.jobs)) {
