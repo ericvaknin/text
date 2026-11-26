@@ -1,0 +1,36 @@
+{
+  "updated": "Nov 26, 12:30 AM",
+  "updated_iso": "2026-11-26T00:30:56-05:00",
+  "jobs": [
+    {
+      "name": "E 28th M & N - Mytek",
+      "url": "https://app.companycam.com/projects/116789192",
+      "open": 17
+    },
+    {
+      "name": "E 19th T & S - Farhi",
+      "url": "https://app.companycam.com/projects/117673892",
+      "open": 8
+    },
+    {
+      "name": "E 57th 2nd & 1st Apt 47G - Motovich",
+      "url": "https://app.companycam.com/projects/92157562",
+      "open": 4
+    },
+    {
+      "name": "E 12th K & L - Schnek",
+      "url": "https://app.companycam.com/projects/117227840",
+      "open": 4
+    },
+    {
+      "name": "Ocean Parkway P & O - Zafrani",
+      "url": "https://app.companycam.com/projects/119090901",
+      "open": 3
+    },
+    {
+      "name": "Bell Point Strickland & Harbor - Isaev",
+      "url": "https://app.companycam.com/projects/94710082",
+      "open": 3
+    }
+  ]
+}
