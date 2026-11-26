@@ -23,13 +23,15 @@ async function getToken() {
   if (!config.runsInApp) return null
   const a = new Alert()
   a.title = "GitHub token"
-  a.message = "Paste your read-only Widget-Data token. It is saved on this phone only."
-  a.addTextField("token", "")
-  a.addAction("Save")
+  a.message = "Copy your Widget-Data token first (from Notes), then tap Use Copied Token. It is saved on this phone only."
+  a.addAction("Use Copied Token")
   a.addCancelAction("Cancel")
   if ((await a.presentAlert()) === -1) return null
-  const t = a.textFieldValue(0).replace(/\s+/g, "")
-  if (!t) return null
+  const t = String(Pasteboard.pasteString() || "").replace(/\s+/g, "")
+  if (!t || t.length < 20) {
+    await showMsg("No token found", "Your clipboard doesn't have the token. Copy it from Notes and run again.")
+    return null
+  }
   try { Keychain.set(TOKEN_KEY, t) } catch (e) { await showMsg("Could not save token", String(e)) }
   return t
 }
