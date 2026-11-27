@@ -98,6 +98,41 @@ function openLabel(job) {
   return String(job.open)
 }
 
+function jobKey(job) {
+  if (!job) return ""
+  const url = String(job.url || "")
+  const m = url.match(/\/projects\/(\d+)/)
+  if (m) return m[1]
+  return url
+}
+
+function scriptableJobUrl(job) {
+  const key = jobKey(job)
+  if (!key) return ""
+  return "scriptable:///run/" + encodeURIComponent(Script.name()) + "?job=" + encodeURIComponent(key)
+}
+
+function findJob(jobs, raw) {
+  if (!jobs || !raw) return null
+  const key = String(raw)
+  for (const job of jobs) {
+    if (jobKey(job) === key) return job
+    if (job.url && String(job.url) === key) return job
+  }
+  return null
+}
+
+function itemLabel(item) {
+  if (item == null) return ""
+  if (typeof item === "string") return item
+  return String(item.name || item.text || item.title || "")
+}
+
+function itemIsDone(item) {
+  if (item == null || typeof item === "string") return false
+  return !!(item.done || item.checked || item.completed)
+}
+
 function makeWidget(data, fromCache, family) {
   const widget = new ListWidget()
   widget.backgroundColor = COLORS.bg
@@ -148,7 +183,7 @@ function makeWidget(data, fromCache, family) {
     const row = widget.addStack()
     row.layoutHorizontally()
     row.centerAlignContent()
-    row.url = job.url || ""
+    row.url = scriptableJobUrl(job)
 
     const name = row.addText(job.name || "Untitled")
     name.font = nameFont
@@ -165,12 +200,74 @@ function makeWidget(data, fromCache, family) {
     }
   })
 
-  if (isSmall && shown[0] && shown[0].url) {
-    widget.url = shown[0].url
+  if (isSmall && shown[0]) {
+    widget.url = scriptableJobUrl(shown[0])
   }
 
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000)
   return widget
+}
+
+async function showJobDetail(job, data, fromCache) {
+  const table = new UITable()
+  table.showSeparators = true
+  const actions = []
+
+  function addRow(row, action) {
+    table.addRow(row)
+    actions.push(action)
+  }
+
+  const back = new UITableRow()
+  back.dismissOnSelect = true
+  back.height = 44
+  const backCell = back.addText("All jobs")
+  backCell.titleColor = Color.blue()
+  addRow(back, "back")
+
+  const header = new UITableRow()
+  header.isHeader = true
+  header.addText(job.name || "Untitled")
+  addRow(header, null)
+
+  const open = new UITableRow()
+  open.dismissOnSelect = true
+  open.height = 44
+  const openCell = open.addText("Open in CompanyCam")
+  openCell.titleColor = Color.blue()
+  addRow(open, "open")
+
+  const items = Array.isArray(job.items) ? job.items : []
+  if (items.length === 0) {
+    const empty = new UITableRow()
+    empty.dismissOnSelect = false
+    empty.addText("No material items in this snapshot.")
+    addRow(empty, null)
+  } else {
+    for (const item of items) {
+      const row = new UITableRow()
+      row.dismissOnSelect = false
+      row.height = 44
+      const label = itemLabel(item)
+      const done = itemIsDone(item)
+      const cell = row.addText(done ? ("✓  " + label) : label)
+      cell.titleFont = Font.systemFont(16)
+      if (done) cell.titleColor = Color.gray()
+      addRow(row, null)
+    }
+  }
+
+  let action = null
+  table.onSelect = (index) => {
+    action = actions[index] || null
+  }
+
+  await table.present()
+  if (action === "open" && job.url) {
+    Safari.open(job.url)
+  } else if (action === "back") {
+    await showTable(data, fromCache)
+  }
 }
 
 async function showTable(data, fromCache) {
@@ -208,14 +305,15 @@ async function showTable(data, fromCache) {
     table.addRow(row)
   }
 
+  let selected = null
   table.onSelect = (index) => {
-    const job = jobs[index - 1]
-    if (job && job.url) {
-      Safari.open(job.url)
-    }
+    selected = jobs[index - 1] || null
   }
 
   await table.present()
+  if (selected) {
+    await showJobDetail(selected, data, fromCache)
+  }
 }
 
 const { data, fromCache } = await loadJobs()
@@ -223,7 +321,16 @@ const { data, fromCache } = await loadJobs()
 if (config.runsInWidget) {
   Script.setWidget(makeWidget(data, fromCache, config.widgetFamily))
 } else {
-  await showTable(data, fromCache)
+  const jobParam = (args.queryParameters && args.queryParameters.job) || ""
+  const selected = jobParam ? findJob(data && data.jobs, jobParam) : null
+  if (jobParam && selected) {
+    await showJobDetail(selected, data, fromCache)
+  } else {
+    if (jobParam && !selected) {
+      await showMsg("Job not found", "That job isn't in the materials list anymore.")
+    }
+    await showTable(data, fromCache)
+  }
 }
 
 Script.complete()
