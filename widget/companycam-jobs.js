@@ -1,12 +1,12 @@
 // CompanyCam Jobs — Scriptable widget
 // Shows recent jobs from:
-// the private Widget-Data repo (jobs.json)
+// the private CompanyCam-Widget-Data repo (jobs.json)
 // This list is a snapshot. It does not update itself until that file is republished.
 
-// Paste your Widget-Data token between the quotes below:
+// Paste your CompanyCam-Widget-Data token between the quotes below:
 const MY_TOKEN = "PASTE_TOKEN_HERE"
 
-const FEED_URL = "https://api.github.com/repos/ericvaknin/Widget-Data/contents/jobs.json"
+const FEED_URL = "https://api.github.com/repos/ericvaknin/CompanyCam-Widget-Data/contents/jobs.json"
 const CACHE_NAME = "companycam-jobs-cache.json"
 
 const COLORS = {

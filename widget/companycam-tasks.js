@@ -1,12 +1,12 @@
 // CompanyCam Open Tasks — Scriptable widget
 // Shows jobs with unchecked checklist items from:
-// the private Widget-Data repo (tasks.json)
+// the private CompanyCam-Widget-Data repo (tasks.json)
 // This list is a snapshot. It does not update itself until that file is republished.
 
-// Paste your Widget-Data token between the quotes below:
+// Paste your CompanyCam-Widget-Data token between the quotes below:
 const MY_TOKEN = "PASTE_TOKEN_HERE"
 
-const FEED_URL = "https://api.github.com/repos/ericvaknin/Widget-Data/contents/tasks.json"
+const FEED_URL = "https://api.github.com/repos/ericvaknin/CompanyCam-Widget-Data/contents/tasks.json"
 const CACHE_NAME = "companycam-tasks-cache.json"
 
 const COLORS = {
