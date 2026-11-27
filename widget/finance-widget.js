@@ -71,16 +71,18 @@ function isScheduled(bill) {
 
 function isCredited(bill) {
   if (!bill) return false
-  if (bill.credited === true) return true
-  return /\bamex credit\b/i.test(String(bill.note || ""))
+  const flag = bill.credited
+  if (flag === true || flag === 1 || String(flag).toLowerCase() === "true") return true
+  return /amex\s*-?\s*credit|\bcredited\b/i.test(String(bill.note || ""))
 }
 
 function visibleBills(bills) {
   return (bills || []).filter((b) => !isScheduled(b))
 }
 
-function widgetAutopayBills(bills) {
-  return billsOfKind(visibleBills(bills), "Autopay").filter((b) => !isCredited(b))
+// Home Screen lists only. The in-app table still uses visibleBills so credited bills remain there.
+function widgetVisibleBills(bills) {
+  return visibleBills(bills).filter((b) => !isCredited(b))
 }
 
 function billsInTotals(bills) {
@@ -325,6 +327,7 @@ function addPostedLine(parent, checking, size) {
 }
 
 function addBillRow(parent, bill, compact) {
+  if (isCredited(bill)) return null
   const row = parent.addStack()
   row.layoutHorizontally()
   row.centerAlignContent()
@@ -462,6 +465,7 @@ function billMarker(bill) {
 }
 
 function addFullBillRow(parent, bill, dueWidth) {
+  if (isCredited(bill)) return null
   const row = parent.addStack()
   row.layoutHorizontally()
   row.centerAlignContent()
@@ -603,9 +607,9 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
 
   const wide = isWideFamily(family)
   const innerWidth = Math.max(200, contentWidth(family) - (wide ? 48 : 40))
-  const bills = data ? sortBills(visibleBills(data.bills)) : []
+  const bills = data ? sortBills(widgetVisibleBills(data.bills)) : []
   const manuals = billsOfKind(bills, "Manual")
-  const autopay = widgetAutopayBills(data ? data.bills : [])
+  const autopay = billsOfKind(bills, "Autopay")
   const outTotal = sumAmounts(billsInTotals(bills), "amount")
   const cards = cardsData ? sortCards(cardsData.cards) : []
   const maxBillRows = 5
@@ -854,7 +858,7 @@ function makeWidget(data, fromCache, family, cardsData, cardsFromCache) {
     addInlineMetric(right, "After rent", formatMoney(checking.after_rent))
   }
 
-  const manuals = billsOfKind(visibleBills(data.bills), "Manual")
+  const manuals = billsOfKind(widgetVisibleBills(data.bills), "Manual")
   const limit = billLimit(family)
   const shown = manuals.slice(0, limit)
   const more = manuals.length - shown.length
