@@ -1,23 +1,37 @@
 // Finance — Scriptable widget
-// Shows Amex checking 7897 and upcoming bills from:
-// the private Finance-Widget-Data repo (finance.json)
-// This is a snapshot. It does not update itself until that file is republished.
+// Shows Amex checking 7897, upcoming bills, and card balances from:
+// the private Finance-Widget-Data repo (finance.json and cards.json)
+// This is a snapshot. It does not update itself until those files are republished.
+//
+// Sizes: small, medium, and large keep the existing compact layouts.
+// extraLargePortrait (iOS / iPadOS 27, Scriptable 1.8.3+) is the full-height
+// 4x6 Home Screen widget and shows the complete dashboard.
+// extraLarge (iPad landscape) uses the same content in two columns.
+// Unrecognized families fall back to the large layout.
 
 // Paste your Finance-Widget-Data token between the quotes below:
 const MY_TOKEN = "PASTE_TOKEN_HERE"
 
 const FEED_URL = "https://api.github.com/repos/ericvaknin/Finance-Widget-Data/contents/finance.json"
+const CARDS_URL = "https://api.github.com/repos/ericvaknin/Finance-Widget-Data/contents/cards.json"
 const CACHE_NAME = "finance-widget-cache.json"
+const CARDS_CACHE_NAME = "finance-widget-cards-cache.json"
 const TOKEN_KEY = "financeDataToken"
 
 const COLORS = {
   bg: new Color("#0E0E10"),
+  card: new Color("#1C1C1E"),
+  divider: new Color("#3A3A3C", 0.55),
   title: Color.white(),
   meta: new Color("#8E8E93"),
   name: Color.white(),
   positive: new Color("#30D158"),
+  moneyIn: new Color("#30D158"),
+  moneyOut: new Color("#FF453A"),
   error: new Color("#FF9F0A")
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 // --- helpers (pure) ---
 
@@ -59,9 +73,64 @@ function visibleBills(bills) {
   return (bills || []).filter((b) => !isScheduled(b))
 }
 
+function billsInTotals(bills) {
+  return (bills || []).filter((b) => b && b.in_totals !== false)
+}
+
+function sumAmounts(items, key) {
+  return (items || []).reduce((n, item) => n + (Number(item && item[key]) || 0), 0)
+}
+
+function leftoverColor(n) {
+  const num = Number(n)
+  if (!isFinite(num)) return COLORS.meta
+  if (num < 0) return COLORS.moneyOut
+  return COLORS.moneyIn
+}
+
+function formatDue(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return ""
+  const month = MONTHS[Number(m[2]) - 1]
+  if (!month) return ""
+  return month + " " + Number(m[3])
+}
+
+function sortCards(cards) {
+  return (cards || []).slice().sort((a, b) => {
+    const ba = Number(a && a.balance)
+    const bb = Number(b && b.balance)
+    const na = isFinite(ba) ? ba : 0
+    const nb = isFinite(bb) ? bb : 0
+    if (na !== nb) return nb - na
+    const name = String((a && a.name) || "").localeCompare(String((b && b.name) || ""))
+    if (name) return name
+    return String((a && a.last4) || "").localeCompare(String((b && b.last4) || ""))
+  })
+}
+
+function cardLabel(card) {
+  const name = String((card && card.name) || "Card")
+  const last4 = card && card.last4 ? String(card.last4) : ""
+  return last4 ? name + " " + last4 : name
+}
+
+function isTallFamily(family) {
+  return family === "extraLargePortrait" || family === "systemExtraLargePortrait"
+}
+
+function isWideFamily(family) {
+  return family === "extraLarge" || family === "systemExtraLarge"
+}
+
+function isFullFamily(family) {
+  return isTallFamily(family) || isWideFamily(family)
+}
+
 function billLimit(family) {
   if (family === "small") return 1
   if (family === "large") return 4
+  if (isFullFamily(family)) return 24
   return 3
 }
 
@@ -78,6 +147,33 @@ function updatedLabel(data, fromCache, family) {
 
 function isValidFeed(json) {
   return !!(json && json.checking && typeof json.checking === "object" && Array.isArray(json.bills))
+}
+
+function isValidCardsFeed(json) {
+  return !!(json && Array.isArray(json.cards))
+}
+
+function contentWidth(family) {
+  const screen = Device.screenSize()
+  const short = Math.min(screen.width, screen.height)
+  const long = Math.max(screen.width, screen.height)
+  const key = Math.round(short) + "x" + Math.round(long)
+  const tall = {
+    "430x932": 364,
+    "428x926": 364,
+    "414x896": 360,
+    "414x736": 348,
+    "393x852": 338,
+    "390x844": 338,
+    "375x812": 329,
+    "375x667": 321,
+    "360x780": 329,
+    "320x568": 292
+  }
+  if (isWideFamily(family)) return Math.max(600, Math.round(short - 40))
+  const width = tall[key]
+  if (width) return width
+  return 338
 }
 
 // --- end helpers ---
@@ -113,31 +209,30 @@ async function showMsg(title, msg) {
   await b.presentAlert()
 }
 
-async function loadFinance() {
-  const fm = FileManager.local()
-  const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_NAME)
+async function loadGithubJson(token, fm, url, cacheName, validate, opts) {
+  const cachePath = fm.joinPath(fm.documentsDirectory(), cacheName)
   let data = null
   let fromCache = false
   try {
-    const token = await getToken()
     if (!token) throw new Error("No token")
-    const req = new Request(FEED_URL + "?t=" + Date.now())
+    const req = new Request(url + "?t=" + Date.now())
     req.headers = { "Authorization": "Bearer " + token, "Accept": "application/vnd.github.raw+json" }
     req.timeoutInterval = 8
     const raw = await req.loadString()
     const code = req.response ? req.response.statusCode : 0
-    if (code === 401 || code === 403 || code === 404) {
+    if (code === 401 || code === 403 || (opts && opts.clearOn404 && code === 404)) {
       try { Keychain.remove(TOKEN_KEY) } catch (e) {}
       throw new Error("GitHub said " + code + ". The token was rejected or can't see Finance-Widget-Data. Run again and paste the Finance-Widget-Data token.")
     }
+    if (code === 404) throw new Error("GitHub said 404.")
     const json = JSON.parse(raw)
-    if (!isValidFeed(json)) {
-      throw new Error("Bad data (status " + code + ")")
-    }
+    if (!validate(json)) throw new Error("Bad data (status " + code + ")")
     data = json
     fm.writeString(cachePath, JSON.stringify(json))
   } catch (e) {
-    await showMsg("Couldn't load fresh data", String(e && e.message ? e.message : e))
+    if (opts && opts.alert) {
+      await showMsg("Couldn't load fresh data", String(e && e.message ? e.message : e))
+    }
     if (fm.fileExists(cachePath)) {
       try {
         data = JSON.parse(fm.readString(cachePath))
@@ -148,6 +243,20 @@ async function loadFinance() {
     }
   }
   return { data, fromCache }
+}
+
+async function loadFeeds() {
+  const fm = FileManager.local()
+  const token = await getToken()
+  const finance = await loadGithubJson(token, fm, FEED_URL, CACHE_NAME, isValidFeed, {
+    alert: true,
+    clearOn404: true
+  })
+  const cards = await loadGithubJson(token, fm, CARDS_URL, CARDS_CACHE_NAME, isValidCardsFeed, {
+    alert: false,
+    clearOn404: false
+  })
+  return { finance, cards }
 }
 
 function addMetricColumn(parent, label, value, fontSize) {
@@ -238,11 +347,410 @@ function addBillRow(parent, bill, compact) {
   return row
 }
 
-function makeWidget(data, fromCache, family) {
+function addPanel(parent) {
+  const panel = parent.addStack()
+  panel.layoutVertically()
+  panel.backgroundColor = COLORS.card
+  panel.cornerRadius = 12
+  panel.setPadding(10, 12, 10, 12)
+  return panel
+}
+
+function addSectionHeader(parent, title, trailing, trailingColor) {
+  const row = parent.addStack()
+  row.layoutHorizontally()
+  row.centerAlignContent()
+  const t = row.addText(title)
+  t.font = Font.semiboldSystemFont(11)
+  t.textColor = COLORS.meta
+  t.lineLimit = 1
+  if (trailing != null && trailing !== "") {
+    row.addSpacer()
+    const r = row.addText(String(trailing))
+    r.font = Font.semiboldSystemFont(11)
+    r.textColor = trailingColor || COLORS.meta
+    r.lineLimit = 1
+    r.minimumScaleFactor = 0.7
+  }
+  return row
+}
+
+function addDivider(parent, width) {
+  parent.addSpacer(8)
+  const line = parent.addStack()
+  line.backgroundColor = COLORS.divider
+  line.cornerRadius = 1
+  line.size = new Size(width, 1)
+  parent.addSpacer(8)
+}
+
+function addFlowBar(parent, inAmt, outAmt, width) {
+  const inVal = Math.max(0, Number(inAmt) || 0)
+  const outVal = Math.max(0, Number(outAmt) || 0)
+  const total = inVal + outVal
+  const barW = Math.max(80, width)
+  const barH = 6
+
+  const labels = parent.addStack()
+  labels.layoutHorizontally()
+  labels.centerAlignContent()
+  const inL = labels.addText("In  " + formatMoney(inVal))
+  inL.font = Font.semiboldSystemFont(11)
+  inL.textColor = COLORS.moneyIn
+  inL.lineLimit = 1
+  inL.minimumScaleFactor = 0.7
+  labels.addSpacer()
+  const outL = labels.addText("Out  " + formatMoney(outVal))
+  outL.font = Font.semiboldSystemFont(11)
+  outL.textColor = COLORS.moneyOut
+  outL.lineLimit = 1
+  outL.minimumScaleFactor = 0.7
+
+  parent.addSpacer(6)
+  const bar = parent.addStack()
+  bar.layoutHorizontally()
+  bar.cornerRadius = 3
+  bar.size = new Size(barW, barH)
+  if (total <= 0) {
+    const empty = bar.addStack()
+    empty.backgroundColor = COLORS.divider
+    empty.size = new Size(barW, barH)
+    return
+  }
+  const inW = Math.max(3, Math.round((barW - 2) * (inVal / total)))
+  const outW = Math.max(3, barW - 2 - inW)
+  const inSeg = bar.addStack()
+  inSeg.backgroundColor = COLORS.moneyIn
+  inSeg.size = new Size(inW, barH)
+  bar.addSpacer(2)
+  const outSeg = bar.addStack()
+  outSeg.backgroundColor = COLORS.moneyOut
+  outSeg.size = new Size(outW, barH)
+}
+
+function addLeftoverRow(parent, label, value) {
+  const row = parent.addStack()
+  row.layoutHorizontally()
+  row.centerAlignContent()
+  const l = row.addText(label)
+  l.font = Font.systemFont(11)
+  l.textColor = COLORS.meta
+  l.lineLimit = 1
+  row.addSpacer()
+  const v = row.addText(formatMoney(value))
+  v.font = Font.semiboldSystemFont(14)
+  v.textColor = leftoverColor(value)
+  v.lineLimit = 1
+  v.minimumScaleFactor = 0.7
+  return row
+}
+
+function billMarker(bill) {
+  if (!bill) return ""
+  if (bill.in_totals === false) return "excl"
+  if (bill.kind === "Autopay") return "auto"
+  return ""
+}
+
+function addFullBillRow(parent, bill, dueWidth) {
+  const row = parent.addStack()
+  row.layoutHorizontally()
+  row.centerAlignContent()
+
+  const dueStack = row.addStack()
+  dueStack.layoutHorizontally()
+  dueStack.centerAlignContent()
+  dueStack.size = new Size(dueWidth, 13)
+  const due = dueStack.addText(bill.due || "")
+  due.font = Font.systemFont(10)
+  due.textColor = COLORS.meta
+  due.lineLimit = 1
+  due.minimumScaleFactor = 0.6
+
+  row.addSpacer(5)
+
+  const name = row.addText(bill.bill || "Bill")
+  name.font = Font.mediumSystemFont(11)
+  name.textColor = COLORS.name
+  name.lineLimit = 1
+  name.minimumScaleFactor = 0.7
+
+  const marker = billMarker(bill)
+  if (marker) {
+    row.addSpacer(4)
+    const tag = row.addText(marker)
+    tag.font = Font.systemFont(9)
+    tag.textColor = COLORS.meta
+    tag.lineLimit = 1
+  }
+
+  row.addSpacer()
+
+  const amt = row.addText(formatMoney(bill.amount))
+  amt.font = Font.semiboldSystemFont(11)
+  amt.textColor = COLORS.moneyOut
+  amt.lineLimit = 1
+  amt.minimumScaleFactor = 0.7
+  return row
+}
+
+function addBillsList(parent, bills, columns, maxRows, dueWidth) {
+  const cap = Math.max(1, columns) * Math.max(1, maxRows)
+  const shown = bills.slice(0, cap)
+  const more = bills.length - shown.length
+  if (!shown.length) {
+    const empty = parent.addText("No upcoming bills.")
+    empty.font = Font.systemFont(11)
+    empty.textColor = COLORS.meta
+    return more
+  }
+
+  const grid = parent.addStack()
+  grid.layoutHorizontally()
+  grid.topAlignContent()
+
+  const perCol = Math.ceil(shown.length / columns)
+  for (let c = 0; c < columns; c++) {
+    if (c) grid.addSpacer(10)
+    const col = grid.addStack()
+    col.layoutVertically()
+    const slice = shown.slice(c * perCol, (c + 1) * perCol)
+    slice.forEach((bill, i) => {
+      if (i) col.addSpacer(3)
+      addFullBillRow(col, bill, dueWidth)
+    })
+  }
+
+  if (more > 0) {
+    parent.addSpacer(4)
+    const rest = parent.addText("+" + more + " more")
+    rest.font = Font.systemFont(10)
+    rest.textColor = COLORS.meta
+    rest.lineLimit = 1
+  }
+  return more
+}
+
+function addFullCardRow(parent, card) {
+  const row = parent.addStack()
+  row.layoutHorizontally()
+  row.centerAlignContent()
+
+  const left = row.addStack()
+  left.layoutVertically()
+  const title = left.addText(cardLabel(card))
+  title.font = Font.mediumSystemFont(12)
+  title.textColor = COLORS.name
+  title.lineLimit = 1
+  title.minimumScaleFactor = 0.7
+
+  const details = []
+  const pending = Number(card.pending)
+  if (isFinite(pending) && pending !== 0) details.push(formatMoney(pending) + " pending")
+  if (card.min_due != null) details.push("min " + formatMoney(card.min_due))
+  const due = formatDue(card.due_iso)
+  if (due) details.push("due " + due)
+  const note = card && card.status_note ? String(card.status_note).trim() : ""
+  if (/no payment due/i.test(note)) details.push("none due")
+  else if (/scheduled/i.test(note)) details.push("scheduled")
+  if (details.length) {
+    const sub = left.addText(details.join("  ·  "))
+    sub.font = Font.systemFont(10)
+    sub.textColor = COLORS.meta
+    sub.lineLimit = 1
+    sub.minimumScaleFactor = 0.7
+  }
+
+  row.addSpacer()
+
+  const bal = Number(card.balance)
+  const amt = row.addText(formatMoney(card.balance))
+  amt.font = Font.semiboldSystemFont(13)
+  amt.textColor = !isFinite(bal) || bal === 0 ? COLORS.meta : COLORS.moneyOut
+  amt.lineLimit = 1
+  amt.minimumScaleFactor = 0.7
+  return row
+}
+
+function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
+  const widget = new ListWidget()
+  widget.backgroundColor = COLORS.bg
+  widget.setPadding(12, 14, 12, 14)
+
+  const wide = isWideFamily(family)
+  const innerWidth = Math.max(200, contentWidth(family) - (wide ? 48 : 40))
+  const bills = data ? sortBills(visibleBills(data.bills)) : []
+  const manuals = billsOfKind(bills, "Manual")
+  const autopay = billsOfKind(bills, "Autopay")
+  const outTotal = sumAmounts(billsInTotals(bills), "amount")
+  const cards = cardsData ? sortCards(cardsData.cards) : []
+  const maxBillRows = wide ? 8 : 12
+  const billCols = wide ? 1 : 2
+  const dueWidth = wide ? 72 : 58
+  const panelWidth = wide ? Math.floor((innerWidth - 10) / 2) : innerWidth
+
+  const header = widget.addStack()
+  header.layoutHorizontally()
+  header.centerAlignContent()
+  const title = header.addText("Checking 7897")
+  title.font = Font.boldSystemFont(15)
+  title.textColor = COLORS.title
+  title.lineLimit = 1
+  title.minimumScaleFactor = 0.8
+  header.addSpacer()
+  const metaText = updatedLabel(data, fromCache, family)
+  if (metaText) {
+    const meta = header.addText(metaText)
+    meta.font = Font.systemFont(10)
+    meta.textColor = COLORS.meta
+    meta.lineLimit = 1
+    meta.minimumScaleFactor = 0.7
+  }
+
+  const checking = data && data.checking ? data.checking : null
+  if (!data || !checking) {
+    widget.addSpacer(8)
+    const msg = widget.addText(data ? "No checking data." : "Couldn't load finance data.")
+    msg.font = Font.systemFont(12)
+    msg.textColor = COLORS.error
+    msg.lineLimit = 4
+    widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000)
+    return widget
+  }
+
+  widget.addSpacer(8)
+
+  function addCheckingBody(parent, width) {
+    const posted = parent.addText(formatMoney(checking.posted))
+    posted.font = Font.boldSystemFont(wide ? 26 : 28)
+    posted.textColor = COLORS.moneyIn
+    posted.lineLimit = 1
+    posted.minimumScaleFactor = 0.7
+
+    const pendingAmt = Number(checking.pending) || 0
+    const pending = parent.addText(pendingAmt !== 0
+      ? "+" + formatMoney(pendingAmt) + " pending"
+      : "No pending deposits")
+    pending.font = Font.systemFont(12)
+    pending.textColor = pendingAmt !== 0 ? COLORS.moneyIn : COLORS.meta
+    pending.lineLimit = 1
+    pending.minimumScaleFactor = 0.8
+
+    if (Array.isArray(checking.pending_items) && checking.pending_items.length > 0) {
+      parent.addSpacer(4)
+      checking.pending_items.forEach((item) => {
+        const line = parent.addStack()
+        line.layoutHorizontally()
+        line.centerAlignContent()
+        const amt = line.addText("+" + formatMoney(item.amount))
+        amt.font = Font.semiboldSystemFont(11)
+        amt.textColor = COLORS.moneyIn
+        amt.lineLimit = 1
+        amt.minimumScaleFactor = 0.7
+        line.addSpacer(8)
+        const label = line.addText(item.label || "Pending deposit")
+        label.font = Font.systemFont(11)
+        label.textColor = COLORS.meta
+        label.lineLimit = 1
+        label.minimumScaleFactor = 0.7
+      })
+    }
+
+    addDivider(parent, width)
+    addLeftoverRow(parent, "After scheduled", checking.after_scheduled)
+    parent.addSpacer(3)
+    addLeftoverRow(parent, "After rent", checking.after_rent)
+    addDivider(parent, width)
+    addFlowBar(parent, combinedBalance(checking), outTotal, width)
+  }
+
+  function addBillsPanel(parent, columns, rows, width) {
+    const panel = addPanel(parent)
+    const countLabel = manuals.length + " you pay  ·  " + autopay.length + " autopay"
+    addSectionHeader(panel, "Bills", countLabel)
+    panel.addSpacer(8)
+    addBillsList(panel, bills, columns, rows, dueWidth)
+    return panel
+  }
+
+  function addCardsPanel(parent) {
+    const panel = addPanel(parent)
+    const totalText = cardsData && cardsData.total_balance != null
+      ? formatMoney(cardsData.total_balance)
+      : ""
+    const trailColor = totalText && Number(cardsData.total_balance) > 0 ? COLORS.moneyOut : COLORS.meta
+    const stamp = cardsFromCache && cardsData ? "cached" : ""
+    addSectionHeader(panel, stamp ? "Cards  ·  cached" : "Cards", totalText, trailColor)
+    panel.addSpacer(8)
+    if (!cardsData) {
+      const msg = panel.addText("Couldn't load card data.")
+      msg.font = Font.systemFont(11)
+      msg.textColor = COLORS.error
+      msg.lineLimit = 2
+      return panel
+    }
+    if (!cards.length) {
+      const msg = panel.addText("No card data.")
+      msg.font = Font.systemFont(11)
+      msg.textColor = COLORS.meta
+      return panel
+    }
+    const cardCap = 6
+    const shown = cards.slice(0, cardCap)
+    shown.forEach((card, i) => {
+      if (i) panel.addSpacer(7)
+      addFullCardRow(panel, card)
+    })
+    if (cards.length > shown.length) {
+      panel.addSpacer(4)
+      const rest = panel.addText("+" + (cards.length - shown.length) + " more")
+      rest.font = Font.systemFont(10)
+      rest.textColor = COLORS.meta
+      rest.lineLimit = 1
+    }
+    return panel
+  }
+
+  if (wide) {
+    const body = widget.addStack()
+    body.layoutHorizontally()
+    body.topAlignContent()
+
+    const left = addPanel(body)
+    addCheckingBody(left, panelWidth)
+
+    body.addSpacer(10)
+
+    const right = body.addStack()
+    right.layoutVertically()
+    addBillsPanel(right, 1, maxBillRows, panelWidth)
+    right.addSpacer(10)
+    addCardsPanel(right)
+  } else {
+    const checkingPanel = addPanel(widget)
+    addCheckingBody(checkingPanel, panelWidth)
+    widget.addSpacer(10)
+    addBillsPanel(widget, billCols, maxBillRows, panelWidth)
+    widget.addSpacer(10)
+    addCardsPanel(widget)
+  }
+
+  widget.addSpacer()
+  widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000)
+  return widget
+}
+
+function makeWidget(data, fromCache, family, cardsData, cardsFromCache) {
+  if (isFullFamily(family)) {
+    return makeFullWidget(data, fromCache, family, cardsData, cardsFromCache)
+  }
+
   const widget = new ListWidget()
   widget.backgroundColor = COLORS.bg
   const isSmall = family === "small"
-  const isLarge = family === "large"
+  const isMedium = family === "medium"
+  const isLarge = !isSmall && !isMedium
+  // Unknown families fall back to the large layout.
   // Medium is as short as small (~155pt). Keep that layout tight.
   if (isLarge) widget.setPadding(14, 16, 14, 16)
   else widget.setPadding(8, 12, 8, 12)
@@ -450,13 +958,12 @@ async function showTable(data, fromCache) {
   await table.present()
 }
 
-const { data, fromCache } = await loadFinance()
+const { finance, cards } = await loadFeeds()
 
 if (config.runsInWidget) {
-  Script.setWidget(makeWidget(data, fromCache, config.widgetFamily))
+  Script.setWidget(makeWidget(finance.data, finance.fromCache, config.widgetFamily, cards.data, cards.fromCache))
 } else {
-  await showTable(data, fromCache)
+  await showTable(finance.data, finance.fromCache)
 }
 
 Script.complete()
-
