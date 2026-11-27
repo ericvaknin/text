@@ -1,5 +1,5 @@
 // Finance — Scriptable widget
-// Shows Amex checking 7897 and upcoming bills from:
+// Action notice: bills Eric still has to pay or schedule, from:
 // the private Finance-Widget-Data repo (finance.json)
 // This is a snapshot. It does not update itself until that file is republished.
 
@@ -16,6 +16,8 @@ const COLORS = {
   meta: new Color("#8E8E93"),
   name: Color.white(),
   positive: new Color("#30D158"),
+  warn: new Color("#FF9F0A"),
+  urgent: new Color("#FF453A"),
   error: new Color("#FF9F0A")
 }
 
@@ -31,28 +33,78 @@ function formatMoney(n) {
   return sign + "$" + parts[0] + "." + parts[1]
 }
 
-function combinedBalance(checking) {
-  if (!checking) return 0
-  return (Number(checking.posted) || 0) + (Number(checking.pending) || 0)
+function parseDueDate(iso) {
+  if (!iso || typeof iso !== "string") return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  if (!m) return null
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
-function sortBills(bills) {
-  return (bills || []).slice().sort((a, b) => {
-    const da = (a && (a.due_sort || a.due_iso)) || ""
-    const db = (b && (b.due_sort || b.due_iso)) || ""
+function daysLeftFromIso(iso) {
+  const due = parseDueDate(iso)
+  if (!due) return null
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((due.getTime() - today.getTime()) / 86400000)
+}
+
+function duePhrase(days) {
+  if (days == null) return ""
+  if (days < 0) return "overdue"
+  if (days === 0) return "today"
+  if (days === 1) return "in 1 day"
+  return "in " + days + " days"
+}
+
+function urgencyColor(days) {
+  if (days == null) return COLORS.meta
+  if (days < 0) return COLORS.urgent
+  if (days <= 3) return COLORS.warn
+  return COLORS.meta
+}
+
+function actionTint(days) {
+  if (days == null) return COLORS.name
+  if (days < 0) return COLORS.urgent
+  if (days <= 3) return COLORS.warn
+  return COLORS.name
+}
+
+function isScheduledNote(note) {
+  return /^\s*scheduled\b/i.test(String(note || ""))
+}
+
+function sortByDue(items, titleKey) {
+  return (items || []).slice().sort((a, b) => {
+    const da = (a && (a.due_iso || a.due_sort)) || ""
+    const db = (b && (b.due_iso || b.due_sort)) || ""
     if (da !== db) return da < db ? -1 : 1
-    return String((a && a.bill) || "").localeCompare(String((b && b.bill) || ""))
+    const ta = String((a && a[titleKey]) || "")
+    const tb = String((b && b[titleKey]) || "")
+    return ta.localeCompare(tb)
   })
 }
 
-function billsOfKind(bills, kind) {
-  return sortBills((bills || []).filter((b) => b && b.kind === kind))
+function actionItems(data) {
+  if (data && Array.isArray(data.actions)) {
+    return sortByDue(data.actions, "title")
+  }
+  // Fallback for an older cached snapshot that only has `bills`.
+  return sortByDue((data && data.bills) || [], "bill")
+    .filter((b) => b && b.kind === "Manual" && !isScheduledNote(b.note))
+    .map((b) => ({
+      due: b.due,
+      due_iso: b.due_iso,
+      title: b.bill,
+      amount: b.amount,
+      note: b.note
+    }))
 }
 
-function billLimit(family) {
-  if (family === "small") return 1
-  if (family === "large") return 4
-  return 3
+function actionLimit(family) {
+  if (family === "small") return 2
+  if (family === "large") return 8
+  return 4
 }
 
 function updatedLabel(data, fromCache, family) {
@@ -67,7 +119,7 @@ function updatedLabel(data, fromCache, family) {
 }
 
 function isValidFeed(json) {
-  return !!(json && json.checking && typeof json.checking === "object" && Array.isArray(json.bills))
+  return !!(json && json.checking && typeof json.checking === "object" && (Array.isArray(json.actions) || Array.isArray(json.bills)))
 }
 
 // --- end helpers ---
@@ -140,92 +192,62 @@ async function loadFinance() {
   return { data, fromCache }
 }
 
-function addMetricColumn(parent, label, value, fontSize) {
-  const col = parent.addStack()
-  col.layoutVertically()
-  const l = col.addText(label)
-  l.font = Font.systemFont(10)
-  l.textColor = COLORS.meta
-  l.lineLimit = 1
-  const v = col.addText(value)
-  v.font = Font.semiboldSystemFont(fontSize)
-  v.textColor = COLORS.title
-  v.lineLimit = 1
-  v.minimumScaleFactor = 0.7
-  return col
-}
+function addActionRow(parent, action, compact) {
+  const days = daysLeftFromIso(action && action.due_iso)
+  const tint = actionTint(days)
+  const dueColor = urgencyColor(days)
 
-function addInlineMetric(parent, label, value) {
-  const row = parent.addStack()
-  row.layoutHorizontally()
-  row.centerAlignContent()
-  const l = row.addText(label)
-  l.font = Font.systemFont(10)
-  l.textColor = COLORS.meta
-  l.lineLimit = 1
-  l.minimumScaleFactor = 0.8
-  row.addSpacer(8)
-  const v = row.addText(value)
-  v.font = Font.semiboldSystemFont(13)
-  v.textColor = COLORS.title
-  v.lineLimit = 1
-  v.minimumScaleFactor = 0.7
-  return row
-}
-
-function addPendingLine(parent, checking, size) {
-  const pendingAmt = Number(checking.pending) || 0
-  const text = pendingAmt !== 0
-    ? "+" + formatMoney(pendingAmt) + " pending"
-    : "No pending deposits"
-  const p = parent.addText(text)
-  p.font = Font.systemFont(size)
-  p.textColor = pendingAmt !== 0 ? COLORS.positive : COLORS.meta
-  p.lineLimit = 1
-  p.minimumScaleFactor = 0.8
-  return p
-}
-
-function addPostedLine(parent, checking, size) {
-  const posted = parent.addText(formatMoney(checking.posted))
-  posted.font = Font.boldSystemFont(size)
-  posted.textColor = COLORS.title
-  posted.lineLimit = 1
-  posted.minimumScaleFactor = 0.7
-  return posted
-}
-
-function addBillRow(parent, bill, compact) {
   const row = parent.addStack()
   row.layoutHorizontally()
   row.centerAlignContent()
 
-  const dueStack = row.addStack()
-  dueStack.layoutHorizontally()
-  dueStack.centerAlignContent()
-  dueStack.size = new Size(compact ? 68 : 82, 14)
-  const due = dueStack.addText(bill.due || "")
-  due.font = Font.systemFont(compact ? 11 : 12)
-  due.textColor = COLORS.meta
-  due.lineLimit = 1
-  due.minimumScaleFactor = 0.7
-
-  row.addSpacer(6)
-
-  const name = row.addText(bill.bill || "Bill")
-  name.font = Font.semiboldSystemFont(compact ? 11 : 12)
-  name.textColor = COLORS.name
+  const name = row.addText((action && action.title) || "Bill")
+  name.font = Font.semiboldSystemFont(compact ? 12 : 13)
+  name.textColor = tint
   name.lineLimit = 1
-  name.minimumScaleFactor = 0.8
+  name.minimumScaleFactor = 0.75
 
   row.addSpacer()
 
-  const amt = row.addText(formatMoney(bill.amount))
-  amt.font = Font.semiboldSystemFont(compact ? 11 : 12)
-  amt.textColor = COLORS.title
+  const amt = row.addText(formatMoney(action && action.amount))
+  amt.font = Font.semiboldSystemFont(compact ? 12 : 13)
+  amt.textColor = tint
   amt.lineLimit = 1
-  amt.minimumScaleFactor = 0.8
+  amt.minimumScaleFactor = 0.75
+
+  const subParts = []
+  if (action && action.due) subParts.push(action.due)
+  const phrase = duePhrase(days)
+  if (phrase) subParts.push(phrase)
+  if (action && action.note) subParts.push(action.note)
+  if (subParts.length) {
+    const sub = parent.addText(subParts.join("  ·  "))
+    sub.font = Font.systemFont(compact ? 10 : 11)
+    sub.textColor = dueColor
+    sub.lineLimit = 1
+    sub.minimumScaleFactor = 0.7
+  }
   return row
+}
+
+function addFooter(parent, checking, data, fromCache, family) {
+  const afterRent = checking && isFinite(Number(checking.after_rent))
+    ? formatMoney(checking.after_rent)
+    : "—"
+  const foot = parent.addText("Checking 7897: " + afterRent + " after rent")
+  foot.font = Font.systemFont(family === "small" ? 9 : 10)
+  foot.textColor = COLORS.meta
+  foot.lineLimit = 1
+  foot.minimumScaleFactor = 0.7
+
+  const stamp = updatedLabel(data, fromCache, family)
+  if (stamp) {
+    const meta = parent.addText(stamp)
+    meta.font = Font.systemFont(family === "small" ? 8 : 9)
+    meta.textColor = COLORS.meta
+    meta.lineLimit = 1
+    meta.minimumScaleFactor = 0.7
+  }
 }
 
 function makeWidget(data, fromCache, family) {
@@ -237,30 +259,39 @@ function makeWidget(data, fromCache, family) {
   if (isLarge) widget.setPadding(14, 16, 14, 16)
   else widget.setPadding(8, 12, 8, 12)
 
+  const actions = actionItems(data)
+  const count = actions.length
+  const limit = actionLimit(family)
+  const overflow = count > limit
+  const shown = overflow ? actions.slice(0, Math.max(1, limit - 1)) : actions.slice(0, limit)
+  const more = count - shown.length
+
   const header = widget.addStack()
   header.layoutHorizontally()
   header.centerAlignContent()
 
-  const title = header.addText(isSmall ? "Checking" : "Checking 7897")
-  title.font = Font.boldSystemFont(isSmall ? 14 : 15)
+  const title = header.addText("To do")
+  title.font = Font.boldSystemFont(isSmall ? 14 : 16)
   title.textColor = COLORS.title
   title.lineLimit = 1
   title.minimumScaleFactor = 0.8
-  header.addSpacer()
-
-  const metaText = updatedLabel(data, fromCache, family)
-  if (metaText) {
-    const meta = header.addText(metaText)
-    meta.font = Font.systemFont(isSmall ? 9 : 10)
-    meta.textColor = COLORS.meta
-    meta.lineLimit = 1
-    meta.minimumScaleFactor = 0.7
+  header.addSpacer(8)
+  const badge = header.addText(String(count))
+  badge.font = Font.semiboldSystemFont(isSmall ? 13 : 15)
+  let badgeColor = COLORS.meta
+  if (count === 0) {
+    badgeColor = COLORS.positive
+  } else {
+    const firstDays = daysLeftFromIso(actions[0] && actions[0].due_iso)
+    if (firstDays != null && firstDays <= 3) badgeColor = urgencyColor(firstDays)
   }
+  badge.textColor = badgeColor
+  badge.lineLimit = 1
 
   const checking = data && data.checking ? data.checking : null
-  if (!data || !checking) {
+  if (!data) {
     widget.addSpacer(8)
-    const msg = widget.addText(data ? "No checking data." : "Couldn't load finance data.")
+    const msg = widget.addText("Couldn't load finance data.")
     msg.font = Font.systemFont(12)
     msg.textColor = COLORS.error
     msg.lineLimit = 4
@@ -268,79 +299,30 @@ function makeWidget(data, fromCache, family) {
     return widget
   }
 
-  widget.addSpacer(isLarge ? 8 : 5)
-
-  if (isLarge) {
-    addPostedLine(widget, checking, 28)
-    addPendingLine(widget, checking, 13)
-    if (Array.isArray(checking.pending_items) && checking.pending_items.length > 0) {
-      widget.addSpacer(4)
-      checking.pending_items.forEach((item) => {
-        const line = widget.addText(formatMoney(item.amount) + "  " + (item.label || ""))
-        line.font = Font.systemFont(12)
-        line.textColor = COLORS.meta
-        line.lineLimit = 1
-        line.minimumScaleFactor = 0.8
-      })
-    }
-    widget.addSpacer(10)
-    const metrics = widget.addStack()
-    metrics.layoutHorizontally()
-    metrics.topAlignContent()
-    addMetricColumn(metrics, "After scheduled", formatMoney(checking.after_scheduled), 18)
-    metrics.addSpacer()
-    addMetricColumn(metrics, "After rent", formatMoney(checking.after_rent), 18)
-  } else if (isSmall) {
-    addPostedLine(widget, checking, 22)
-    addPendingLine(widget, checking, 11)
-    widget.addSpacer(5)
-    addMetricColumn(widget, "After rent", formatMoney(checking.after_rent), 16)
-  } else {
-    // Medium: balance on the left, leftover figures on the right, bills below.
-    const body = widget.addStack()
-    body.layoutHorizontally()
-    body.topAlignContent()
-
-    const left = body.addStack()
-    left.layoutVertically()
-    addPostedLine(left, checking, 22)
-    addPendingLine(left, checking, 11)
-
-    body.addSpacer(12)
-
-    const right = body.addStack()
-    right.layoutVertically()
-    addInlineMetric(right, "After scheduled", formatMoney(checking.after_scheduled))
-    right.addSpacer(4)
-    addInlineMetric(right, "After rent", formatMoney(checking.after_rent))
-  }
-
-  const manuals = billsOfKind(data.bills, "Manual")
-  const limit = billLimit(family)
-  const shown = manuals.slice(0, limit)
-  const more = manuals.length - shown.length
-
   widget.addSpacer(isLarge ? 10 : 6)
-  if (isLarge) {
-    const label = widget.addText("You pay")
-    label.font = Font.semiboldSystemFont(11)
-    label.textColor = COLORS.meta
-    label.lineLimit = 1
-    widget.addSpacer(4)
+
+  if (count === 0) {
+    const empty = widget.addText("All caught up")
+    empty.font = Font.semiboldSystemFont(isSmall ? 15 : 18)
+    empty.textColor = COLORS.positive
+    empty.lineLimit = 2
+    empty.minimumScaleFactor = 0.8
+  } else {
+    shown.forEach((action, i) => {
+      if (i > 0) widget.addSpacer(isLarge ? 6 : 4)
+      addActionRow(widget, action, isSmall)
+    })
+    if (more > 0) {
+      widget.addSpacer(3)
+      const rest = widget.addText("+" + more + " more")
+      rest.font = Font.systemFont(11)
+      rest.textColor = COLORS.meta
+      rest.lineLimit = 1
+    }
   }
 
-  shown.forEach((bill, i) => {
-    if (i > 0) widget.addSpacer(2)
-    addBillRow(widget, bill, isSmall)
-  })
-
-  if (more > 0) {
-    widget.addSpacer(2)
-    const rest = widget.addText("+" + more + " more")
-    rest.font = Font.systemFont(11)
-    rest.textColor = COLORS.meta
-    rest.lineLimit = 1
-  }
+  widget.addSpacer()
+  addFooter(widget, checking, data, fromCache, family)
 
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000)
   return widget
@@ -350,87 +332,59 @@ async function showTable(data, fromCache) {
   const table = new UITable()
   table.showSeparators = true
   const checking = data && data.checking ? data.checking : null
-  const bills = sortBills(data && Array.isArray(data.bills) ? data.bills : [])
+  const actions = actionItems(data)
 
   const header = new UITableRow()
   header.isHeader = true
-  let heading = "Finance"
+  let heading = "To do"
   if (data && data.updated) {
-    heading = "Finance  ·  " + data.updated + (fromCache ? "  (cached)" : "")
+    heading = "To do  ·  " + actions.length + "  ·  " + data.updated + (fromCache ? "  (cached)" : "")
   } else if (!data) {
-    heading = "Finance  ·  couldn't load"
+    heading = "To do  ·  couldn't load"
+  } else {
+    heading = "To do  ·  " + actions.length
   }
   header.addText(heading)
   table.addRow(header)
 
   if (checking) {
-    const pendingAmt = Number(checking.pending) || 0
-    const summary = new UITableRow()
-    summary.height = 52
-    const left = summary.addText(
-      checking.name || "Amex checking 7897",
-      formatMoney(checking.posted) + " posted" +
-        (pendingAmt !== 0 ? "  ·  +" + formatMoney(pendingAmt) + " pending" : "")
-    )
-    left.titleFont = Font.semiboldSystemFont(16)
-    left.subtitleFont = Font.systemFont(12)
-    table.addRow(summary)
-
     const leftover = new UITableRow()
     leftover.height = 44
     const leftoverCell = leftover.addText(
-      "After scheduled  " + formatMoney(checking.after_scheduled),
-      "After rent  " + formatMoney(checking.after_rent)
+      "Checking 7897: " + formatMoney(checking.after_rent) + " after rent",
+      "Posted " + formatMoney(checking.posted) +
+        ((Number(checking.pending) || 0) !== 0 ? "  ·  +" + formatMoney(checking.pending) + " pending" : "")
     )
     leftoverCell.titleFont = Font.systemFont(15)
-    leftoverCell.subtitleFont = Font.systemFont(15)
+    leftoverCell.subtitleFont = Font.systemFont(12)
     table.addRow(leftover)
-
-    if (Array.isArray(checking.pending_items) && checking.pending_items.length > 0) {
-      for (const item of checking.pending_items) {
-        const row = new UITableRow()
-        row.height = 40
-        const cell = row.addText(item.label || "Pending deposit", "+" + formatMoney(item.amount))
-        cell.titleFont = Font.systemFont(14)
-        cell.subtitleFont = Font.systemFont(12)
-        table.addRow(row)
-      }
-    }
-  } else {
+  } else if (!data) {
     const empty = new UITableRow()
-    empty.addText(data ? "No checking data." : "Couldn't load finance data. Check your internet and try again.")
+    empty.addText("Couldn't load finance data. Check your internet and try again.")
     table.addRow(empty)
   }
 
-  const section = new UITableRow()
-  section.isHeader = true
-  const manualCount = data && data.manual_count != null ? data.manual_count : billsOfKind(bills, "Manual").length
-  const autopayCount = data && data.autopay_count != null ? data.autopay_count : billsOfKind(bills, "Autopay").length
-  section.addText("Upcoming bills  ·  " + manualCount + " you pay  ·  " + autopayCount + " autopay")
-  table.addRow(section)
-
-  if (bills.length === 0 && data) {
+  if (actions.length === 0 && data) {
     const empty = new UITableRow()
-    empty.addText("No upcoming bills.")
+    empty.addText("All caught up")
     table.addRow(empty)
   }
 
-  for (const bill of bills) {
+  for (const action of actions) {
     const row = new UITableRow()
     row.height = 52
     row.dismissOnSelect = false
-    const kindLabel = bill.kind === "Manual" ? "You pay" : "Autopay"
+    const days = daysLeftFromIso(action.due_iso)
     const extras = []
-    if (bill.note) extras.push(bill.note)
-    if (bill.in_totals === false) extras.push("not in totals")
-    const subtitleParts = [bill.due || "", kindLabel, bill.from || ""]
-    if (extras.length) subtitleParts.push(extras.join(" · "))
-    const title = bill.bill || "Bill"
-    const cell = row.addText(title, subtitleParts.filter(Boolean).join("  ·  "))
+    if (action.due) extras.push(action.due)
+    const phrase = duePhrase(days)
+    if (phrase) extras.push(phrase)
+    if (action.note) extras.push(action.note)
+    const cell = row.addText(action.title || "Bill", extras.join("  ·  "))
     cell.titleFont = Font.semiboldSystemFont(16)
     cell.subtitleFont = Font.systemFont(12)
     cell.widthWeight = 70
-    const amt = row.addText(formatMoney(bill.amount))
+    const amt = row.addText(formatMoney(action.amount))
     amt.titleFont = Font.semiboldSystemFont(16)
     amt.rightAligned = true
     amt.widthWeight = 30
@@ -449,4 +403,3 @@ if (config.runsInWidget) {
 }
 
 Script.complete()
-
