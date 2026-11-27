@@ -69,8 +69,18 @@ function isScheduled(bill) {
   return /^\s*scheduled\b/i.test(String(bill.note || ""))
 }
 
+function isCredited(bill) {
+  if (!bill) return false
+  if (bill.credited === true) return true
+  return /\bamex credit\b/i.test(String(bill.note || ""))
+}
+
 function visibleBills(bills) {
   return (bills || []).filter((b) => !isScheduled(b))
+}
+
+function widgetAutopayBills(bills) {
+  return billsOfKind(visibleBills(bills), "Autopay").filter((b) => !isCredited(b))
 }
 
 function billsInTotals(bills) {
@@ -352,7 +362,7 @@ function addPanel(parent) {
   panel.layoutVertically()
   panel.backgroundColor = COLORS.card
   panel.cornerRadius = 12
-  panel.setPadding(10, 12, 10, 12)
+  panel.setPadding(8, 10, 8, 10)
   return panel
 }
 
@@ -376,12 +386,12 @@ function addSectionHeader(parent, title, trailing, trailingColor) {
 }
 
 function addDivider(parent, width) {
-  parent.addSpacer(8)
+  parent.addSpacer(6)
   const line = parent.addStack()
   line.backgroundColor = COLORS.divider
   line.cornerRadius = 1
   line.size = new Size(width, 1)
-  parent.addSpacer(8)
+  parent.addSpacer(6)
 }
 
 function addFlowBar(parent, inAmt, outAmt, width) {
@@ -588,16 +598,17 @@ function addFullCardRow(parent, card) {
 function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
   const widget = new ListWidget()
   widget.backgroundColor = COLORS.bg
-  widget.setPadding(12, 14, 12, 14)
+  // ~550 pt tall on smaller iPhones; 16 pt padding leaves room at the rounded corners.
+  widget.setPadding(16, 14, 16, 14)
 
   const wide = isWideFamily(family)
   const innerWidth = Math.max(200, contentWidth(family) - (wide ? 48 : 40))
   const bills = data ? sortBills(visibleBills(data.bills)) : []
   const manuals = billsOfKind(bills, "Manual")
-  const autopay = billsOfKind(bills, "Autopay")
+  const autopay = widgetAutopayBills(data ? data.bills : [])
   const outTotal = sumAmounts(billsInTotals(bills), "amount")
   const cards = cardsData ? sortCards(cardsData.cards) : []
-  const maxBillRows = wide ? 8 : 12
+  const maxBillRows = 5
   const dueWidth = 52
   const panelWidth = wide ? Math.floor((innerWidth - 10) / 2) : innerWidth
 
@@ -630,11 +641,11 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
     return widget
   }
 
-  widget.addSpacer(8)
+  widget.addSpacer(6)
 
   function addCheckingBody(parent, width) {
     const posted = parent.addText(formatMoney(checking.posted))
-    posted.font = Font.boldSystemFont(wide ? 26 : 28)
+    posted.font = Font.boldSystemFont(24)
     posted.textColor = COLORS.moneyIn
     posted.lineLimit = 1
     posted.minimumScaleFactor = 0.7
@@ -679,7 +690,7 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
   function addBillsPanel(parent, rows, width) {
     const panel = addPanel(parent)
     addSectionHeader(panel, "Bills")
-    panel.addSpacer(8)
+    panel.addSpacer(6)
     const split = width >= 280
     addSplitBills(panel, manuals, autopay, rows, dueWidth, split)
     return panel
@@ -693,7 +704,7 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
     const trailColor = totalText && Number(cardsData.total_balance) > 0 ? COLORS.moneyOut : COLORS.meta
     const stamp = cardsFromCache && cardsData ? "cached" : ""
     addSectionHeader(panel, stamp ? "Cards  ·  cached" : "Cards", totalText, trailColor)
-    panel.addSpacer(8)
+    panel.addSpacer(6)
     if (!cardsData) {
       const msg = panel.addText("Couldn't load card data.")
       msg.font = Font.systemFont(11)
@@ -710,7 +721,7 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
     const cardCap = 6
     const shown = cards.slice(0, cardCap)
     shown.forEach((card, i) => {
-      if (i) panel.addSpacer(7)
+      if (i) panel.addSpacer(5)
       addFullCardRow(panel, card)
     })
     if (cards.length > shown.length) {
@@ -736,18 +747,16 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
     const right = body.addStack()
     right.layoutVertically()
     addBillsPanel(right, maxBillRows, panelWidth)
-    right.addSpacer(10)
+    right.addSpacer(6)
     addCardsPanel(right)
   } else {
     const checkingPanel = addPanel(widget)
     addCheckingBody(checkingPanel, panelWidth)
-    widget.addSpacer(10)
+    widget.addSpacer(6)
     addBillsPanel(widget, maxBillRows, panelWidth)
-    widget.addSpacer(10)
+    widget.addSpacer(6)
     addCardsPanel(widget)
   }
-
-  widget.addSpacer()
   widget.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000)
   return widget
 }
@@ -952,6 +961,7 @@ async function showTable(data, fromCache) {
     const kindLabel = bill.kind === "Manual" ? "You pay" : "Autopay"
     const extras = []
     if (bill.note) extras.push(bill.note)
+    if (bill.credited) extras.push("credited")
     if (bill.in_totals === false) extras.push("not in totals")
     const subtitleParts = [bill.due || "", kindLabel, bill.from || ""]
     if (extras.length) subtitleParts.push(extras.join(" · "))
