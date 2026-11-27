@@ -1,12 +1,12 @@
 // Finance — Scriptable widget
 // Shows Amex checking 7897 and upcoming bills from:
-// the private Finance-Data repo (finance.json)
+// the private Finance-Widget-Data repo (finance.json)
 // This is a snapshot. It does not update itself until that file is republished.
 
-// Paste your Finance-Data token between the quotes below:
+// Paste your Finance-Widget-Data token between the quotes below:
 const MY_TOKEN = "PASTE_TOKEN_HERE"
 
-const FEED_URL = "https://api.github.com/repos/ericvaknin/Finance-Data/contents/finance.json"
+const FEED_URL = "https://api.github.com/repos/ericvaknin/Finance-Widget-Data/contents/finance.json"
 const CACHE_NAME = "finance-widget-cache.json"
 const TOKEN_KEY = "financeDataToken"
 
@@ -81,7 +81,7 @@ async function getToken() {
   if (!config.runsInApp) return null
   const a = new Alert()
   a.title = "GitHub token"
-  a.message = "Copy your Finance-Data token first (from Notes), then tap Use Copied Token. It is saved on this phone only."
+  a.message = "Copy your Finance-Widget-Data token first (from Notes), then tap Use Copied Token. It is saved on this phone only."
   a.addAction("Use Copied Token")
   a.addCancelAction("Cancel")
   if ((await a.presentAlert()) === -1) return null
@@ -118,7 +118,7 @@ async function loadFinance() {
     const code = req.response ? req.response.statusCode : 0
     if (code === 401 || code === 403 || code === 404) {
       try { Keychain.remove(TOKEN_KEY) } catch (e) {}
-      throw new Error("GitHub said " + code + ". The token was rejected or can't see Finance-Data. Run again and paste the Finance-Data token.")
+      throw new Error("GitHub said " + code + ". The token was rejected or can't see Finance-Widget-Data. Run again and paste the Finance-Widget-Data token.")
     }
     const json = JSON.parse(raw)
     if (!isValidFeed(json)) {
