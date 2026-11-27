@@ -73,7 +73,10 @@ function isCredited(bill) {
   if (!bill) return false
   const flag = bill.credited
   if (flag === true || flag === 1 || String(flag).toLowerCase() === "true") return true
-  return /amex\s*-?\s*credit|\bcredited\b/i.test(String(bill.note || ""))
+  // Net-of-credit notes (e.g. "$23.45 less $16.01 Amex credit") stay visible.
+  const note = String(bill.note || "")
+  if (/\bless\b/i.test(note)) return false
+  return /amex\s*-?\s*credit|\bcredited\b/i.test(note)
 }
 
 function visibleBills(bills) {
