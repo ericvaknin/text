@@ -448,7 +448,6 @@ function addLeftoverRow(parent, label, value) {
 function billMarker(bill) {
   if (!bill) return ""
   if (bill.in_totals === false) return "excl"
-  if (bill.kind === "Autopay") return "auto"
   return ""
 }
 
@@ -494,41 +493,55 @@ function addFullBillRow(parent, bill, dueWidth) {
   return row
 }
 
-function addBillsList(parent, bills, columns, maxRows, dueWidth) {
-  const cap = Math.max(1, columns) * Math.max(1, maxRows)
-  const shown = bills.slice(0, cap)
-  const more = bills.length - shown.length
+function billColumnTrail(bills) {
+  const count = (bills || []).length
+  const total = sumAmounts(billsInTotals(bills), "amount")
+  return count + "  ·  " + formatMoney(total)
+}
+
+function addBillColumn(parent, title, bills, maxRows, dueWidth, trailing, trailingColor) {
+  const col = parent.addStack()
+  col.layoutVertically()
+  addSectionHeader(col, title, trailing, trailingColor)
+  col.addSpacer(6)
+  const shown = (bills || []).slice(0, Math.max(0, maxRows))
+  const more = (bills || []).length - shown.length
   if (!shown.length) {
-    const empty = parent.addText("No upcoming bills.")
+    const empty = col.addText("None")
     empty.font = Font.systemFont(11)
     empty.textColor = COLORS.meta
-    return more
+    empty.lineLimit = 1
+    return col
   }
-
-  const grid = parent.addStack()
-  grid.layoutHorizontally()
-  grid.topAlignContent()
-
-  const perCol = Math.ceil(shown.length / columns)
-  for (let c = 0; c < columns; c++) {
-    if (c) grid.addSpacer(10)
-    const col = grid.addStack()
-    col.layoutVertically()
-    const slice = shown.slice(c * perCol, (c + 1) * perCol)
-    slice.forEach((bill, i) => {
-      if (i) col.addSpacer(3)
-      addFullBillRow(col, bill, dueWidth)
-    })
-  }
-
+  shown.forEach((bill, i) => {
+    if (i) col.addSpacer(3)
+    addFullBillRow(col, bill, dueWidth)
+  })
   if (more > 0) {
-    parent.addSpacer(4)
-    const rest = parent.addText("+" + more + " more")
+    col.addSpacer(4)
+    const rest = col.addText("+" + more + " more")
     rest.font = Font.systemFont(10)
     rest.textColor = COLORS.meta
     rest.lineLimit = 1
   }
-  return more
+  return col
+}
+
+function addSplitBills(parent, manuals, autopay, maxRows, dueWidth, split) {
+  const manualTrail = billColumnTrail(manuals)
+  const autopayTrail = billColumnTrail(autopay)
+  if (split) {
+    const grid = parent.addStack()
+    grid.layoutHorizontally()
+    grid.topAlignContent()
+    addBillColumn(grid, "You pay", manuals, maxRows, dueWidth, manualTrail, COLORS.moneyOut)
+    grid.addSpacer(10)
+    addBillColumn(grid, "Autopay", autopay, maxRows, dueWidth, autopayTrail, COLORS.meta)
+  } else {
+    addBillColumn(parent, "You pay", manuals, maxRows, dueWidth, manualTrail, COLORS.moneyOut)
+    parent.addSpacer(8)
+    addBillColumn(parent, "Autopay", autopay, maxRows, dueWidth, autopayTrail, COLORS.meta)
+  }
 }
 
 function addFullCardRow(parent, card) {
@@ -585,8 +598,7 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
   const outTotal = sumAmounts(billsInTotals(bills), "amount")
   const cards = cardsData ? sortCards(cardsData.cards) : []
   const maxBillRows = wide ? 8 : 12
-  const billCols = wide ? 1 : 2
-  const dueWidth = wide ? 72 : 58
+  const dueWidth = 52
   const panelWidth = wide ? Math.floor((innerWidth - 10) / 2) : innerWidth
 
   const header = widget.addStack()
@@ -664,12 +676,12 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
     addFlowBar(parent, combinedBalance(checking), outTotal, width)
   }
 
-  function addBillsPanel(parent, columns, rows, width) {
+  function addBillsPanel(parent, rows, width) {
     const panel = addPanel(parent)
-    const countLabel = manuals.length + " you pay  ·  " + autopay.length + " autopay"
-    addSectionHeader(panel, "Bills", countLabel)
+    addSectionHeader(panel, "Bills")
     panel.addSpacer(8)
-    addBillsList(panel, bills, columns, rows, dueWidth)
+    const split = width >= 280
+    addSplitBills(panel, manuals, autopay, rows, dueWidth, split)
     return panel
   }
 
@@ -723,14 +735,14 @@ function makeFullWidget(data, fromCache, family, cardsData, cardsFromCache) {
 
     const right = body.addStack()
     right.layoutVertically()
-    addBillsPanel(right, 1, maxBillRows, panelWidth)
+    addBillsPanel(right, maxBillRows, panelWidth)
     right.addSpacer(10)
     addCardsPanel(right)
   } else {
     const checkingPanel = addPanel(widget)
     addCheckingBody(checkingPanel, panelWidth)
     widget.addSpacer(10)
-    addBillsPanel(widget, billCols, maxBillRows, panelWidth)
+    addBillsPanel(widget, maxBillRows, panelWidth)
     widget.addSpacer(10)
     addCardsPanel(widget)
   }
